@@ -1,6 +1,15 @@
 import type { LiveWeatherData } from '@/types';
 
 const OPEN_METEO_CURRENT_URL = 'https://api.open-meteo.com/v1/forecast';
+const OPEN_METEO_GEOCODING_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+
+export interface LocationSearchResult {
+  name: string;
+  latitude: number;
+  longitude: number;
+  country?: string;
+  admin1?: string;
+}
 const WEATHER_CODE_MAP: Record<number, string> = {
   0: 'Clear sky',
   1: 'Mainly clear',
@@ -34,6 +43,31 @@ const WEATHER_CODE_MAP: Record<number, string> = {
 
 function describeWeatherCode(code: number): string {
   return WEATHER_CODE_MAP[code] ?? 'Unknown';
+}
+
+export async function searchLocations(query: string): Promise<LocationSearchResult[]> {
+  const trimmedQuery = query.trim();
+  if (trimmedQuery.length < 2) return [];
+
+  const params = new URLSearchParams({
+    name: trimmedQuery,
+    count: '5',
+    language: 'en',
+    format: 'json',
+  });
+  const res = await fetch(`${OPEN_METEO_GEOCODING_URL}?${params.toString()}`);
+  if (!res.ok) throw new Error(`Location API returned ${res.status}: ${res.statusText}`);
+
+  const json = await res.json();
+  return Array.isArray(json.results)
+    ? json.results.map((result: LocationSearchResult) => ({
+        name: result.name,
+        latitude: result.latitude,
+        longitude: result.longitude,
+        country: result.country,
+        admin1: result.admin1,
+      }))
+    : [];
 }
 
 export async function getCurrentWeather(

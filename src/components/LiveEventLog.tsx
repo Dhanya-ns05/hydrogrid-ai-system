@@ -20,6 +20,7 @@ const severityBg: Record<EventLogSeverity, string> = {
 
 const categoryIcon: Record<EventLogCategory, string> = {
   rainfall: 'RAIN',
+  weather: 'WX',
   flood: 'FLOOD',
   vault: 'VAULT',
   routing: 'ROUTE',

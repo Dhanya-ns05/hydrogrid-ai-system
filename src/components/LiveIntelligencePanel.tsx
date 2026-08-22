@@ -18,11 +18,11 @@ import {
   ChevronDown,
   ChevronUp,
   Cloud,
+  Search,
 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { BENGALURU_CENTER } from '@/data/mockData';
+import { searchLocations, type LocationSearchResult } from '@/services/weather';
 import { riskColor, riskLabel } from '@/utils/risk';
-import type { RiskLevel } from '@/types';
 
 const LOCATION_PRESETS = [
   { name: 'Bengaluru Center', lat: 12.9716, lon: 77.5946 },
@@ -41,11 +41,14 @@ export function LiveIntelligencePanel() {
   const fetchWeather = useStore((s) => s.fetchWeather);
   const setLiveLocation = useStore((s) => s.setLiveLocation);
   const clearWeather = useStore((s) => s.clearWeather);
-  const floodZones = useStore((s) => s.floodZones);
 
   const [showFactors, setShowFactors] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [locationQuery, setLocationQuery] = useState('');
+  const [locationResults, setLocationResults] = useState<LocationSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [locationSearchError, setLocationSearchError] = useState<string | null>(null);
 
   const handleLocationSelect = useCallback(
     (name: string, lat: number, lon: number) => {
@@ -54,6 +57,37 @@ export function LiveIntelligencePanel() {
     },
     [setLiveLocation, fetchWeather]
   );
+
+  useEffect(() => {
+    const query = locationQuery.trim();
+    if (query.length < 2) {
+      setLocationResults([]);
+      setLocationSearchError(null);
+      return;
+    }
+
+    let active = true;
+    const timer = setTimeout(async () => {
+      setIsSearching(true);
+      setLocationSearchError(null);
+      try {
+        const results = await searchLocations(query);
+        if (active) setLocationResults(results);
+      } catch (error) {
+        if (active) {
+          setLocationResults([]);
+          setLocationSearchError(error instanceof Error ? error.message : 'Location search failed');
+        }
+      } finally {
+        if (active) setIsSearching(false);
+      }
+    }, 350);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [locationQuery]);
 
   // Auto-refresh polling
   useEffect(() => {
@@ -119,6 +153,37 @@ export function LiveIntelligencePanel() {
             );
           })}
         </div>
+        <div className="relative mt-2">
+          <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-surface-600" />
+          <input
+            value={locationQuery}
+            onChange={(event) => setLocationQuery(event.target.value)}
+            placeholder="Search a city or place"
+            aria-label="Search a city or place"
+            className="w-full rounded-lg border border-surface-200/40 bg-surface-200/20 py-2 pl-8 pr-3 text-xs text-white outline-none placeholder:text-surface-600 focus:border-cyan-500/50"
+          />
+          {isSearching && <Loader2 className="absolute right-2.5 top-2.5 w-3.5 h-3.5 animate-spin text-cyan-400" />}
+          {locationResults.length > 0 && (
+            <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-surface-200/50 bg-surface-100 shadow-xl">
+              {locationResults.map((result) => (
+                <button
+                  key={`${result.latitude}-${result.longitude}`}
+                  onClick={() => {
+                    const name = [result.name, result.admin1, result.country].filter(Boolean).join(', ');
+                    handleLocationSelect(name, result.latitude, result.longitude);
+                    setLocationQuery(name);
+                    setLocationResults([]);
+                  }}
+                  className="block w-full border-b border-surface-200/30 px-3 py-2 text-left text-xs text-white last:border-0 hover:bg-cyan-500/10"
+                >
+                  <span className="block font-bold">{result.name}</span>
+                  <span className="text-[10px] text-surface-600">{[result.admin1, result.country].filter(Boolean).join(', ')}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {locationSearchError && <p className="mt-1 text-[10px] text-risk-medium">{locationSearchError}</p>}
       </div>
 
       {/* Status indicator */}

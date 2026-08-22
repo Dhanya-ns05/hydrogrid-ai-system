@@ -349,6 +349,7 @@ export interface SystemStatus {
 
 export type EventLogCategory =
   | 'rainfall'
+  | 'weather'
   | 'flood'
   | 'vault'
   | 'routing'

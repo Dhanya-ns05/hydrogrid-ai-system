@@ -2,10 +2,6 @@ import type {
   DataMode,
   DataSourceInfo,
   LiveDataConfig,
-  FloodZone,
-  Vault,
-  RoadSegment,
-  RainfallReading,
 } from '@/types';
 
 const DEFAULT_CONFIG: LiveDataConfig = {
@@ -54,24 +50,13 @@ export function setDataMode(mode: DataMode): void {
       errorMessage: null,
     };
   } else {
-    if (!currentConfig.apiKey || !currentConfig.apiUrl) {
-      currentStatus = {
-        mode: 'live',
-        status: 'fallback',
-        provider: 'No API configured',
-        lastFetch: null,
-        errorMessage: 'No live API key or URL configured. Falling back to simulation.',
-      };
-      currentMode = 'simulation';
-    } else {
-      currentStatus = {
-        mode: 'live',
-        status: 'connected',
-        provider: 'Live Data Provider',
-        lastFetch: null,
-        errorMessage: null,
-      };
-    }
+    currentStatus = {
+      mode: 'live',
+      status: 'connected',
+      provider: currentConfig.apiUrl ? 'Configured Live Data Provider' : 'Open-Meteo Weather + Geocoding',
+      lastFetch: null,
+      errorMessage: null,
+    };
   }
   notify();
 }

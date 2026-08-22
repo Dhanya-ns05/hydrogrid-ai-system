@@ -9,6 +9,7 @@ import type {
   RiskLevel,
   TrendDirection,
   PredictionHorizon,
+  LiveWeatherData,
 } from '@/types';
 import { predictFromFeatures } from './trainingPipeline';
 import type { RandomForestModel } from './randomForest';
@@ -31,10 +32,16 @@ export function vaultToFeatureVector(vault: Vault, timeOfDay: number): FeatureVe
   };
 }
 
-export function zoneToFeatureVector(zone: FloodZone, timeOfDay: number): FeatureVector {
+export function zoneToFeatureVector(
+  zone: FloodZone,
+  timeOfDay: number,
+  liveWeather?: LiveWeatherData | null
+): FeatureVector {
   return {
-    rainfall_intensity: zone.rainfall,
-    cumulative_rainfall: zone.cumulativeRainfall,
+    rainfall_intensity: liveWeather?.precipitation ?? zone.rainfall,
+    cumulative_rainfall: liveWeather
+      ? zone.cumulativeRainfall + liveWeather.forecastPrecipitation
+      : zone.cumulativeRainfall,
     current_water_level: zone.waterLevel,
     water_level_rise_rate: zone.riseRate,
     vault_capacity: 50, // zones don't have vaults; use average
@@ -77,7 +84,7 @@ export function predictVault(
 ): PredictionResult {
   const fv = vaultToFeatureVector(vault, timeOfDay);
   const features = Object.values(fv);
-  const { label, probability, probabilities } = predictFromFeatures(model, features);
+  const { label, probability } = predictFromFeatures(model, features);
 
   // Convert probability (0-1) to 0-100 scale
   const floodProbability = Math.round(probability * 100);
@@ -113,9 +120,10 @@ export function predictZone(
   zone: FloodZone,
   horizon: PredictionHorizon,
   timeOfDay: number,
-  prevProb: number | null
+  prevProb: number | null,
+  liveWeather?: LiveWeatherData | null
 ): PredictionResult {
-  const fv = zoneToFeatureVector(zone, timeOfDay);
+  const fv = zoneToFeatureVector(zone, timeOfDay, liveWeather);
   const features = Object.values(fv);
   const { label, probability } = predictFromFeatures(model, features);
 

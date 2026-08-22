@@ -524,6 +524,7 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
       if (state.simulation.state !== 'running') return state;
 
       const dt = getSpeedMultiplier(state.simulation.speed) * 0.5;
+      const rainfallInput = state.weather.data?.precipitation ?? state.simulation.rainfallIntensity;
 
       // Track baseline metrics if in baseline mode
       let baselineMetrics = state.baselineMetrics;
@@ -549,12 +550,12 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
           ...zone.history.slice(-19),
           { time: new Date().toISOString(), waterLevel: newWaterLevel },
         ];
-        const newCumulativeRainfall = zone.cumulativeRainfall + state.simulation.rainfallIntensity * dt * 0.05;
+        const newCumulativeRainfall = zone.cumulativeRainfall + rainfallInput * dt * 0.05;
 
         return {
           ...zone,
           waterLevel: newWaterLevel,
-          rainfall: state.simulation.rainfallIntensity * (0.7 + Math.random() * 0.3),
+          rainfall: state.weather.data ? rainfallInput : state.simulation.rainfallIntensity * (0.7 + Math.random() * 0.3),
           riseRate: state.simulation.waterRiseRate,
           riskScore: newRiskScore,
           riskLevel: riskLevelFromScore(newRiskScore),
@@ -568,7 +569,7 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
       // Update vaults
       let waterDiverted = state.waterDiverted;
       const updatedVaults: Vault[] = state.vaults.map((vault) => {
-        const inflow = (state.simulation.rainfallIntensity / 150) * dt * 3;
+        const inflow = (rainfallInput / 150) * dt * 3;
         let newLevel = Math.min(100, Math.max(0, vault.currentLevel + inflow));
 
         // Auto-divert from critical vaults to connected vaults with capacity
@@ -586,7 +587,7 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
 
         const newRiskLevel = riskLevelFromVaultLevel(newLevel);
         const newStatus = vaultStatusFromLevel(newLevel);
-        const newCumulativeRainfall = vault.cumulativeRainfall + state.simulation.rainfallIntensity * dt * 0.05;
+        const newCumulativeRainfall = vault.cumulativeRainfall + rainfallInput * dt * 0.05;
         return {
           ...vault,
           currentLevel: newLevel,
@@ -1911,6 +1912,14 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
       ].slice(0, 100);
 
       set({
+        dataMode: 'live',
+        dataSourceInfo: {
+          mode: 'live',
+          status: 'connected',
+          provider: weatherData.source,
+          lastFetch: weatherData.timestamp,
+          errorMessage: null,
+        },
         weather: {
           data: weatherData,
           status: 'success',
@@ -1924,11 +1933,20 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
         eventLog: newEventLog,
       });
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch weather data';
       set({
+        dataMode: 'simulation',
+        dataSourceInfo: {
+          mode: 'live',
+          status: 'fallback',
+          provider: 'Simulation Engine',
+          lastFetch: null,
+          errorMessage: `${errorMessage}. Using simulation data.`,
+        },
         weather: {
           ...state.weather,
           status: 'error',
-          error: err instanceof Error ? err.message : 'Failed to fetch weather data',
+          error: errorMessage,
         },
       });
     }

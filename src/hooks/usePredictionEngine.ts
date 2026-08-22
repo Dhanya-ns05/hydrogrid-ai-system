@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useStore } from '@/store/useStore';
 import { modelManager } from '@/services/ml/modelManager';
 import { predictVault, predictZone, baselinePredict } from '@/services/ml/predictionService';
-import type { PredictionResult, ModelInfo, PredictionHorizon } from '@/types';
+import type { PredictionResult, ModelInfo, PredictionHorizon, FloodZone } from '@/types';
 
 export function usePredictionEngine(horizon: PredictionHorizon = 10) {
   const [modelInfo, setModelInfo] = useState<ModelInfo>(modelManager.getInfo());
@@ -15,6 +15,8 @@ export function usePredictionEngine(horizon: PredictionHorizon = 10) {
   const vaults = useStore((s) => s.vaults);
   const floodZones = useStore((s) => s.floodZones);
   const simTick = useStore((s) => s.simulation.tick);
+  const weather = useStore((s) => s.weather);
+  const liveLocation = useStore((s) => s.liveLocation);
 
   // Train the model on mount
   useEffect(() => {
@@ -45,8 +47,22 @@ export function usePredictionEngine(horizon: PredictionHorizon = 10) {
     const vaultPredictions = vaults.map((vault) =>
       predictVault(model, vault, horizon, timeOfDay, null)
     );
+    const liveZone = liveLocation
+      ? floodZones.reduce<FloodZone | null>((nearest, zone) => {
+          const distance = Math.hypot(
+            zone.latitude - liveLocation.latitude,
+            zone.longitude - liveLocation.longitude
+          );
+          if (!nearest) return zone;
+          const nearestDistance = Math.hypot(
+            nearest.latitude - liveLocation.latitude,
+            nearest.longitude - liveLocation.longitude
+          );
+          return distance < nearestDistance ? zone : nearest;
+        }, null)
+      : null;
     const zonePredictions = floodZones.map((zone) =>
-      predictZone(model, zone, horizon, timeOfDay, null)
+      predictZone(model, zone, horizon, timeOfDay, null, zone.id === liveZone?.id ? weather.data : null)
     );
 
     setPredictions([...vaultPredictions, ...zonePredictions]);
@@ -57,7 +73,7 @@ export function usePredictionEngine(horizon: PredictionHorizon = 10) {
       return { id: item.id, ...baselinePredict(wl) };
     });
     setBaselineResults(baseline);
-  }, [vaults, floodZones, horizon]);
+  }, [vaults, floodZones, horizon, weather.data, liveLocation]);
 
   useEffect(() => {
     runPredictions();
