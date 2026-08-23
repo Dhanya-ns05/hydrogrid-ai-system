@@ -38,6 +38,7 @@ interface LayoutProps {
 export function Layout({ activeView, onViewChange, presentationMode, onTogglePresentationMode, children }: LayoutProps) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const simState = useStore((s) => s.simulation.state);
+  const dataMode = useStore((s) => s.dataMode);
 
   return (
     <div className="min-h-screen bg-surface-0 flex flex-col">
@@ -166,7 +167,7 @@ export function Layout({ activeView, onViewChange, presentationMode, onTogglePre
       <footer className="border-t border-surface-200/60 px-4 lg:px-6 py-3 flex items-center justify-between text-xs text-surface-600">
         <div className="flex items-center gap-2">
           <Activity className="w-3.5 h-3.5" />
-          <span>SIMULATED DATA - Demo City: Bengaluru, Karnataka, India</span>
+          <span>{dataMode === 'live' ? 'LIVE DATA - Assam, West Bengal, Kerala' : 'SIMULATION DATA'}</span>
         </div>
         <span className="hidden sm:inline">HydroGrid AI Foundation v1.0</span>
       </footer>

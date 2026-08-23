@@ -16,4 +16,3 @@ Vite proxies `/api` to `http://localhost:8787`. For a deployed backend, set
 If an upstream provider fails or times out, the backend returns HTTP 503 and the frontend shows
 `Live data unavailable`; it does not generate replacement live values.
 
-

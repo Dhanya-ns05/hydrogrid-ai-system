@@ -175,7 +175,7 @@ export function EmergencyRoutePanel() {
         </div>
 
         <div className="flex items-center gap-1.5 text-[10px] text-surface-600">
-          <span className="badge bg-risk-medium/15 text-risk-medium border border-risk-medium/30">SIMULATED EMERGENCY DATA</span>
+          <span className="badge bg-risk-medium/15 text-risk-medium border border-risk-medium/30">LIVE DATA UNAVAILABLE</span>
         </div>
       </div>
     </div>

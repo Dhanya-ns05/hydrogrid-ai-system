@@ -37,9 +37,12 @@ function probRiskLevel(prob: number): RiskLevel {
 export function PredictionMap({ horizon = 10, height = 'h-[500px]' }: { horizon?: PredictionHorizon; height?: string }) {
   const floodZones = useStore((s) => s.floodZones);
   const vaults = useStore((s) => s.vaults);
+  const liveLocation = useStore((s) => s.liveLocation);
   const { predictions, isTraining } = usePredictionEngine(horizon);
 
-  const center: [number, number] = [BENGALURU_CENTER.latitude, BENGALURU_CENTER.longitude];
+  const center: [number, number] = liveLocation
+    ? [liveLocation.latitude, liveLocation.longitude]
+    : [BENGALURU_CENTER.latitude, BENGALURU_CENTER.longitude];
 
   return (
     <div className={`relative ${height} rounded-xl overflow-hidden border border-surface-200/60`}>

@@ -57,10 +57,10 @@ export function SystemView() {
         <div className="flex items-center gap-2 text-xs">
           <span className="badge bg-surface-200/60 text-surface-800 border border-surface-300/40">
             <MapPin className="w-3 h-3" />
-            Bengaluru
+            Assam, West Bengal, Kerala
           </span>
           <span className="badge bg-risk-medium/20 text-risk-medium border border-risk-medium/30">
-            SIMULATED
+            STATUS VIEW
           </span>
         </div>
       </div>

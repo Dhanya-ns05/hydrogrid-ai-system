@@ -2,10 +2,20 @@ import type { Alert, FloodZone, LiveDataState, LiveWeatherData, RegionInfo, Risk
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL ?? '/api/live-data';
 const REFRESH_INTERVAL_MS = 300000;
+const ROUTE_ENDPOINT = import.meta.env.VITE_BACKEND_API_URL
+  ? new URL('../live-route', import.meta.env.VITE_BACKEND_API_URL).toString()
+  : '/api/live-route';
 
 export interface LiveDataRequest {
   latitude: number;
   longitude: number;
+}
+
+export interface LiveRoute {
+  source: string;
+  distance: number;
+  duration: number;
+  coordinates: { latitude: number; longitude: number }[];
 }
 
 export interface LiveDataResponse {
@@ -20,12 +30,15 @@ export interface LiveDataResponse {
   alerts?: Alert[];
   predictions?: RiskPrediction[];
   network?: LiveDataState['network'];
+  risk?: { score: number; level: 'low' | 'medium' | 'high' | 'critical'; basis?: string[] };
+  floodData?: { riverDischarge?: number; source?: string | null; observedAt?: string | null; error?: string | null };
 }
 
 export interface LiveDataResult {
   weather: LiveWeatherData;
   state: LiveDataState;
   entities: Pick<LiveDataResponse, 'floodZones' | 'vaults' | 'roads' | 'alerts' | 'predictions'>;
+  risk?: LiveDataResponse['risk'];
 }
 
 function makeRegion(request: LiveDataRequest, response: LiveDataResponse): RegionInfo {
@@ -109,7 +122,20 @@ export async function fetchLiveData(request: LiveDataRequest): Promise<LiveDataR
       alerts: payload.alerts,
       predictions: payload.predictions,
     },
+    risk: payload.risk,
   };
+}
+
+export async function fetchLiveRoute(origin: LiveDataRequest, destination: LiveDataRequest): Promise<LiveRoute> {
+  const params = new URLSearchParams({
+    originLatitude: String(origin.latitude),
+    originLongitude: String(origin.longitude),
+    destinationLatitude: String(destination.latitude),
+    destinationLongitude: String(destination.longitude),
+  });
+  const response = await fetch(`${ROUTE_ENDPOINT}?${params}`);
+  if (!response.ok) throw new Error(`Live routing API returned ${response.status}`);
+  return response.json() as Promise<LiveRoute>;
 }
 
 export function getLiveDataRefreshInterval(): number {

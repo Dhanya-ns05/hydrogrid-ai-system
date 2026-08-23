@@ -25,8 +25,11 @@ function MapResizer() {
 export function RoutingMap({ sourceVaultId }: { sourceVaultId: string | null }) {
   const vaults = useStore((s) => s.vaults);
   const activeDiversion = useStore((s) => s.activeDiversion);
+  const liveLocation = useStore((s) => s.liveLocation);
 
-  const center: [number, number] = [BENGALURU_CENTER.latitude, BENGALURU_CENTER.longitude];
+  const center: [number, number] = liveLocation
+    ? [liveLocation.latitude, liveLocation.longitude]
+    : [BENGALURU_CENTER.latitude, BENGALURU_CENTER.longitude];
 
   // Find diversion route line if active
   const diversionRoute = activeDiversion

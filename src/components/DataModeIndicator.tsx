@@ -30,7 +30,7 @@ export function DataModeIndicator() {
             }`}
           ></span>
         </span>
-        {isLive ? 'LIVE DATA CONNECTED' : isFallback ? 'SIMULATION (NO API)' : 'SIMULATION MODE'}
+        {isLive ? 'LIVE DATA CONNECTED' : isFallback ? 'LIVE DATA UNAVAILABLE' : 'SIMULATION MODE'}
       </div>
 
       <div className="flex items-center gap-1.5 text-xs text-surface-600">

@@ -456,12 +456,12 @@ function getInitialState(): AppState {
       error: null,
       lastUpdated: null,
       pollIntervalMs: 300000,
-      locationName: 'Bengaluru',
+          locationName: 'Assam',
       region: null,
     },
     liveRisk: null,
     riskHistory: [],
-    liveLocation: { latitude: 19.0760, longitude: 72.8777, name: 'Mumbai Pilot' },
+    liveLocation: { latitude: 26.2006, longitude: 92.9376, name: 'Assam' },
     liveData: {
       status: 'idle',
       selectedLocation: null,
@@ -1599,6 +1599,30 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
 
   setDataMode: (mode) => {
     setHydroDataMode(mode);
+    if (mode === 'live') {
+      set((state) => ({
+        dataMode: 'live',
+        dataSourceInfo: getDataSourceInfo(),
+        floodZones: [],
+        vaults: [],
+        roadSegments: [],
+        roadGraph: [],
+        roadNodes: [],
+        hospitals: [],
+        ambulances: [],
+        emergencyAmbulances: [],
+        emergencyHospitals: [],
+        alerts: [],
+        riskPredictions: [],
+        waterDiverted: 0,
+        diversionEvents: [],
+        routingAnalytics: { totalDiversions: 0, totalWaterDiverted: 0, averageRoutingScore: 0, rejectedDestinations: 0, overflowWarnings: 0 },
+        emergencyRouteSet: null,
+        liveData: { ...state.liveData, status: 'loading', dataStatus: 'UNAVAILABLE', error: null },
+        weather: { ...state.weather, data: null, status: 'fetching', error: null },
+      }));
+      return;
+    }
     set({ dataMode: getDataMode(), dataSourceInfo: getDataSourceInfo() });
   },
 
@@ -1902,6 +1926,9 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
           elevation: result.weather.environmental.elevation,
           soilMoisture: result.weather.environmental.soilMoisture,
           surfaceRunoff: result.weather.environmental.surfaceRunoff,
+          staticContextAvailable: currentState.floodZones.length > 0,
+          authoritativeScore: result.risk?.score,
+          authoritativeLevel: result.risk?.level,
         },
         currentState.liveRisk?.score ?? 0,
         currentState.liveRisk?.level ?? 'low'

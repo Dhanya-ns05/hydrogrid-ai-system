@@ -23,6 +23,9 @@ interface RiskInputs {
   elevation?: number | null;
   soilMoisture?: number | null;
   surfaceRunoff?: number | null;
+  staticContextAvailable?: boolean;
+  authoritativeScore?: number;
+  authoritativeLevel?: RiskLevel;
 }
 
 export function calculateLiveRisk(
@@ -66,34 +69,35 @@ export function calculateLiveRisk(
     source: 'live',
   });
 
-  // 4. Water level contribution (simulated) — 0-20 points
+  const staticContextAvailable = inputs.staticContextAvailable ?? true;
+
+  // Static infrastructure factors are only valid when supplied by a live source.
   const waterLevelScore = Math.min(20, (zoneWaterLevel / 100) * 20);
-  factors.push({
-    label: 'Water Level',
-    value: `${Math.round(zoneWaterLevel)}%`,
-    contribution: Math.round(waterLevelScore),
-    direction: zoneRiseRate > 1 ? 'up' : zoneRiseRate < -0.5 ? 'down' : 'stable',
-    source: 'simulated',
-  });
+  if (staticContextAvailable) {
+    factors.push({
+      label: 'Water Level', value: `${Math.round(zoneWaterLevel)}%`, contribution: Math.round(waterLevelScore),
+      direction: zoneRiseRate > 1 ? 'up' : zoneRiseRate < -0.5 ? 'down' : 'stable', source: 'live',
+    });
+  }
 
   // 5. Drainage capacity contribution (simulated) — 0-10 points (inverse)
   const drainageScore = Math.min(10, ((100 - zoneDrainageCapacity) / 100) * 10);
-  factors.push({
+  if (staticContextAvailable) factors.push({
     label: 'Drainage Capacity',
     value: `${Math.round(zoneDrainageCapacity)}%`,
     contribution: Math.round(drainageScore),
     direction: zoneDrainageCapacity < 40 ? 'up' : 'stable',
-    source: 'simulated',
+    source: 'live',
   });
 
   // 6. Historical flood frequency (simulated) — 0-10 points
   const historyScore = Math.min(10, zoneHistoricalFloodFrequency * 10);
-  factors.push({
+  if (staticContextAvailable) factors.push({
     label: 'Historical Flood Frequency',
     value: `${Math.round(zoneHistoricalFloodFrequency * 100)}%`,
     contribution: Math.round(historyScore),
     direction: 'stable',
-    source: 'simulated',
+    source: 'live',
   });
 
   const runoff = inputs.surfaceRunoff;
@@ -120,13 +124,14 @@ export function calculateLiveRisk(
     });
   }
 
-  const totalScore = Math.min(100, Math.max(0, Math.round(
-    rainfallScore + forecastScore + Math.max(0, humidityScore) + waterLevelScore + drainageScore + historyScore +
+  const calculatedScore = Math.min(100, Math.max(0, Math.round(
+    rainfallScore + forecastScore + Math.max(0, humidityScore) + (staticContextAvailable ? waterLevelScore + drainageScore + historyScore : 0) +
     (runoff !== null && runoff !== undefined ? Math.min(10, runoff * 2) : 0)
     + (soilMoisture !== null && soilMoisture !== undefined ? Math.min(8, soilMoisture * 8) : 0)
   )));
 
-  const level = riskLevelFromScore(totalScore);
+  const totalScore = typeof inputs.authoritativeScore === 'number' ? inputs.authoritativeScore : calculatedScore;
+  const level = inputs.authoritativeLevel ?? riskLevelFromScore(totalScore);
   const delta = totalScore - previousScore;
   const trend: LiveRiskAnalysis['trend'] = delta > 2 ? 'rising' : delta < -2 ? 'falling' : 'stable';
 

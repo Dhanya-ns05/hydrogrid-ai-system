@@ -46,6 +46,8 @@ export function CityMap({
   const ambulances = useStore((s) => s.ambulances);
   const activeDiversion = useStore((s) => s.activeDiversion);
   const emergencyRouteSet = useStore((s) => s.emergencyRouteSet);
+  const liveLocation = useStore((s) => s.liveLocation);
+  const dataMode = useStore((s) => s.dataMode);
 
   const diversionLine = activeDiversion
     ? (() => {
@@ -59,7 +61,9 @@ export function CityMap({
       })()
     : null;
 
-  const center: [number, number] = [BENGALURU_CENTER.latitude, BENGALURU_CENTER.longitude];
+  const center: [number, number] = liveLocation
+    ? [liveLocation.latitude, liveLocation.longitude]
+    : [BENGALURU_CENTER.latitude, BENGALURU_CENTER.longitude];
 
   const roadColor = (risk: RiskLevel) => {
     switch (risk) {
@@ -342,10 +346,9 @@ export function CityMap({
         </div>
       </div>
 
-      {/* Simulated Data Label */}
-      <div className="absolute top-3 right-3 z-[500] badge bg-risk-medium/20 text-risk-medium border border-risk-medium/30">
+      <div className={`absolute top-3 right-3 z-[500] badge ${dataMode === 'live' ? 'bg-risk-low/20 text-risk-low border border-risk-low/30' : 'bg-risk-medium/20 text-risk-medium border border-risk-medium/30'}`}>
         <span className="w-1.5 h-1.5 rounded-full bg-risk-medium animate-pulse"></span>
-        SIMULATED DATA
+        {dataMode === 'live' ? 'LIVE DATA' : 'SIMULATION DATA'}
       </div>
     </div>
   );

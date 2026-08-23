@@ -25,13 +25,9 @@ import { searchLocations, type LocationSearchResult } from '@/services/weather';
 import { riskColor, riskLabel } from '@/utils/risk';
 
 const LOCATION_PRESETS = [
-  { name: 'Mumbai Pilot', lat: 19.0760, lon: 72.8777 },
-  { name: 'Bengaluru Center', lat: 12.9716, lon: 77.5946 },
-  { name: 'Demo Zone A', lat: 12.9756, lon: 77.5996 },
-  { name: 'Demo Zone B', lat: 12.9656, lon: 77.5846 },
-  { name: 'MG Road', lat: 12.9756, lon: 77.6066 },
-  { name: 'Indiranagar', lat: 12.9719, lon: 77.6412 },
-  { name: 'Hebbal', lat: 13.0358, lon: 77.5970 },
+  { name: 'Assam', lat: 26.2006, lon: 92.9376 },
+  { name: 'West Bengal', lat: 22.9868, lon: 87.8550 },
+  { name: 'Kerala', lat: 10.8505, lon: 76.2711 },
 ];
 
 export function LiveIntelligencePanel() {
@@ -221,7 +217,7 @@ export function LiveIntelligencePanel() {
                 Unable to fetch live weather.
               </p>
               <p className="text-[10px] text-surface-600 mt-0.5">
-                {weather.error ?? 'Unknown error'}. Simulation fallback active.
+                {weather.error ?? 'Unknown error'} Live data unavailable.
               </p>
             </div>
           </div>
@@ -463,7 +459,7 @@ export function LiveIntelligencePanel() {
                 <div className="p-2 rounded-lg bg-primary-500/5 border border-primary-500/20">
                   <div className="flex items-center gap-1 mb-1">
                     <Database className="w-2.5 h-2.5 text-primary-400" />
-                    <span className="text-[8px] font-bold text-primary-400 uppercase">Simulated</span>
+                    <span className="text-[8px] font-bold text-primary-400 uppercase">Unavailable</span>
                   </div>
                   <div className="space-y-0.5">
                     {liveRisk.simulatedInputs.map((inp, i) => (
@@ -552,7 +548,7 @@ export function LiveIntelligencePanel() {
       {/* Data source transparency footer */}
       <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-surface-200/30">
         <span className="badge bg-risk-medium/15 text-risk-medium border border-risk-medium/30 text-[8px]">
-          SIMULATED ROUTE ANALYSIS
+          LIVE ROUTE DATA
         </span>
         {hasData && (
           <span className="badge bg-risk-low/15 text-risk-low border border-risk-low/30 text-[8px]">

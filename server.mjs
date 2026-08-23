@@ -3,6 +3,10 @@ import { URL } from 'node:url';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const WEATHER_API = 'https://api.open-meteo.com/v1/forecast';
+const FLOOD_API = 'https://flood-api.open-meteo.com/v1/flood';
+const OSRM_API = 'https://router.project-osrm.org/route/v1/driving';
+const TOMTOM_API_KEY = process.env.TOMTOM_API_KEY;
+const TOMTOM_API = 'https://api.tomtom.com/routing/1/calculateRoute';
 const GEOCODING_API = 'https://nominatim.openstreetmap.org/reverse';
 const WEATHER_CODES = {
   0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
@@ -68,6 +72,20 @@ async function buildLiveData(input) {
     timezone: 'auto',
   });
   const weatherPayload = await getJson(`${WEATHER_API}?${weatherParams}`);
+  let floodPayload = null;
+  let floodError = null;
+  try {
+    const floodParams = new URLSearchParams({
+      latitude: location.latitude.toFixed(4),
+      longitude: location.longitude.toFixed(4),
+      daily: 'river_discharge',
+      forecast_days: '7',
+      timezone: 'auto',
+    });
+    floodPayload = await getJson(`${FLOOD_API}?${floodParams}`);
+  } catch (error) {
+    floodError = error instanceof Error ? error.message : 'Flood provider unavailable';
+  }
   let regionPayload = { address: {} };
   try {
     regionPayload = await getJson(`${GEOCODING_API}?${new URLSearchParams({ lat: String(location.latitude), lon: String(location.longitude), format: 'jsonv2', zoom: '10' })}`, {
@@ -94,13 +112,17 @@ async function buildLiveData(input) {
   const forecastScore = Math.min(25, forecastRainfall * 2.5);
   const runoffScore = Number.isFinite(surfaceRunoff) ? Math.min(20, surfaceRunoff * 2) : 0;
   const soilScore = Number.isFinite(soilMoisture) ? Math.min(10, soilMoisture * 10) : 0;
-  const riskScore = Math.round(Math.min(100, rainfallScore + forecastScore + runoffScore + soilScore));
+  const discharge = floodPayload?.daily?.river_discharge?.[0];
+  const dischargeSeries = floodPayload?.daily?.river_discharge ?? [];
+  const maxDischarge = Math.max(...dischargeSeries.filter((value) => typeof value === 'number'));
+  const floodAvailable = typeof discharge === 'number' && Number.isFinite(discharge) && Number.isFinite(maxDischarge);
+  const floodScore = floodAvailable && maxDischarge > 0 ? Math.min(30, (discharge / maxDischarge) * 30) : 0;
+  const riskScore = Math.round(Math.min(100, rainfallScore + forecastScore + runoffScore + soilScore + floodScore));
   const riskLevel = riskScore >= 75 ? 'critical' : riskScore >= 50 ? 'high' : riskScore >= 25 ? 'medium' : 'low';
   const observedAt = new Date().toISOString();
   const source = 'Open-Meteo via HydroGrid backend';
   const region = regionPayload.address ?? {};
   const provenance = (field) => ({ status: 'live', source, observedAt, reliability: 0.95, field });
-
   return {
     location: { ...location, name: region.city ?? region.town ?? region.municipality ?? region.village ?? 'Selected location' },
     region: {
@@ -136,23 +158,45 @@ async function buildLiveData(input) {
         humidity: provenance('humidity'), windSpeed: provenance('windSpeed'), environmental: provenance('environmental'),
       },
     },
-    risk: { score: riskScore, level: riskLevel, basis: ['current rainfall', 'next 3-hour rainfall', 'surface runoff', 'soil moisture'] },
+    risk: { score: riskScore, level: riskLevel, basis: ['current rainfall', 'next 3-hour rainfall', 'surface runoff', 'soil moisture', ...(floodAvailable ? ['GloFAS river discharge relative to 7-day forecast'] : [])] },
     network: {
       status: 'unavailable',
       source: 'No configured public vault network provider',
       lastUpdated: null,
       error: 'No public vault or water-level network feed is available for this location.',
     },
-    floodZones: [], vaults: [], roads: [], predictions: [],
-    alerts: [{
-      id: 'live-flood-events-unavailable',
-      severity: 'info',
-      title: 'NO ACTIVE EVENT',
-      message: 'No public flood or water-level event feed is available for this location.',
-      source: 'HydroGrid backend',
-      timestamp: observedAt,
-      acknowledged: false,
-    }],
+    floodZones: [], vaults: [], roads: [], predictions: [], alerts: [],
+    floodData: floodAvailable
+      ? { riverDischarge: discharge, source: 'Open-Meteo Flood API (GloFAS)', observedAt }
+      : { source: null, observedAt: null, error: floodError },
+  };
+}
+
+async function buildLiveRoute(input) {
+  const origin = coordinates({ latitude: input.originLatitude, longitude: input.originLongitude });
+  const destination = coordinates({ latitude: input.destinationLatitude, longitude: input.destinationLongitude });
+  const coordinatePath = `${origin.longitude},${origin.latitude}:${destination.longitude},${destination.latitude}`;
+  const url = TOMTOM_API_KEY
+    ? `${TOMTOM_API}/${coordinatePath}/json?${new URLSearchParams({ key: TOMTOM_API_KEY, routeType: 'fastest', traffic: 'true' })}`
+    : `${OSRM_API}/${coordinatePath}?${new URLSearchParams({ overview: 'full', geometries: 'geojson', steps: 'true' })}`;
+  const payload = await getJson(url);
+  if (TOMTOM_API_KEY) {
+    const route = payload.routes?.[0];
+    if (!route?.legs?.[0]?.points) throw new Error('TomTom returned no route');
+    return {
+      source: 'TomTom Routing API',
+      distance: route.summary.lengthInMeters,
+      duration: Math.round(route.summary.travelTimeInSeconds / 60),
+      coordinates: route.legs[0].points.map((point) => ({ latitude: point.latitude, longitude: point.longitude })),
+    };
+  }
+  const route = payload.routes?.[0];
+  if (!route?.geometry?.coordinates) throw new Error('OSRM returned no route');
+  return {
+    source: 'OSRM OpenStreetMap routing',
+    distance: Math.round(route.distance),
+    duration: Math.round(route.duration / 60),
+    coordinates: route.geometry.coordinates.map(([longitude, latitude]) => ({ latitude, longitude })),
   };
 }
 
@@ -166,6 +210,18 @@ const server = http.createServer(async (request, response) => {
     });
   }
   const requestUrl = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+  if (requestUrl.pathname === '/api/live-route' && request.method === 'GET') {
+    try {
+      return json(response, 200, await buildLiveRoute({
+        originLatitude: requestUrl.searchParams.get('originLatitude'),
+        originLongitude: requestUrl.searchParams.get('originLongitude'),
+        destinationLatitude: requestUrl.searchParams.get('destinationLatitude'),
+        destinationLongitude: requestUrl.searchParams.get('destinationLongitude'),
+      }));
+    } catch (error) {
+      return json(response, 503, { status: 'unavailable', error: error instanceof Error ? error.message : 'Live route unavailable' });
+    }
+  }
   if (requestUrl.pathname !== '/api/live-data' || !['GET', 'POST'].includes(request.method ?? '')) {
     return json(response, 404, { error: 'Not found' });
   }
