@@ -10,16 +10,25 @@ import { LiveEventLog } from '@/components/LiveEventLog';
 import { FloodEventSummaryCard } from '@/components/FloodEventSummaryCard';
 import { ArrowDown, GitBranch, Droplets, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { riskColor, riskLabel } from '@/utils/risk';
+import { riskColor } from '@/utils/risk';
+import { LiveDataStatus } from '@/components/LiveDataStatus';
+import { LiveIntelligencePanel } from '@/components/LiveIntelligencePanel';
 
 interface DashboardViewProps {
   presentationMode?: boolean;
 }
 
 export function DashboardView({ presentationMode = false }: DashboardViewProps) {
+  const liveLocation = useStore((state) => state.liveLocation);
+  const dataMode = useStore((state) => state.dataMode);
+  const locationLabel = liveLocation?.name ?? 'Location unavailable';
+
   return (
     <div className="flex flex-col gap-5 animate-fade-in">
       <KPICards />
+
+      <LiveDataStatus />
+  <LiveIntelligencePanel />
 
       {/* System Status Bar */}
       <SystemStatusBar />
@@ -42,7 +51,7 @@ export function DashboardView({ presentationMode = false }: DashboardViewProps) 
         <div className={presentationMode ? 'lg:col-span-3' : 'lg:col-span-2'}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-base font-bold text-white tracking-tight">City Command Map</h2>
-            <span className="text-xs text-surface-600">Bengaluru, Karnataka - Simulated</span>
+            <span className="text-xs text-surface-600">{locationLabel} - {dataMode === 'live' ? 'Live' : 'Simulation'}</span>
           </div>
           <CityMap height={presentationMode ? 'h-[600px]' : 'h-[520px]'} />
         </div>

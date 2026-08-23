@@ -8,11 +8,13 @@ import { EmergencyRoutesView } from '@/views/EmergencyRoutesView';
 import { AnalyticsView } from '@/views/AnalyticsView';
 import { SystemView } from '@/views/SystemView';
 import { useSimulationEngine } from '@/hooks/useSimulationEngine';
+import { useLiveDataSync } from '@/hooks/useLiveDataSync';
 
 function App() {
   const [activeView, setActiveView] = useState<ViewName>('dashboard');
   const [presentationMode, setPresentationMode] = useState(false);
   useSimulationEngine();
+  useLiveDataSync();
 
   return (
     <Layout

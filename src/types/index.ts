@@ -511,6 +511,26 @@ export interface DataSourceInfo {
   errorMessage: string | null;
 }
 
+export type LiveConnectionStatus = 'idle' | 'loading' | 'connected' | 'unavailable';
+
+export interface LiveDataState {
+  status: LiveConnectionStatus;
+  selectedLocation: { latitude: number; longitude: number; name: string } | null;
+  source: string | null;
+  lastUpdated: string | null;
+  nextRefreshAt: string | null;
+  error: string | null;
+  dataStatus: 'LIVE' | 'HISTORICAL' | 'FALLBACK' | 'UNAVAILABLE';
+  network: LiveNetworkState;
+}
+
+export interface LiveNetworkState {
+  status: 'live' | 'unavailable';
+  source: string;
+  lastUpdated: string | null;
+  error: string | null;
+}
+
 export interface LiveDataConfig {
   apiKey: string | null;
   apiUrl: string | null;
@@ -634,6 +654,33 @@ export interface LiveWeatherData {
   forecastPrecipitation: number;
   timestamp: string;
   source: string;
+  region: RegionInfo;
+  environmental: EnvironmentalData;
+  provenance: Record<string, DataProvenance>;
+}
+
+export type DataValueStatus = 'live' | 'historical' | 'estimated' | 'fallback';
+
+export interface DataProvenance {
+  status: DataValueStatus;
+  source: string;
+  observedAt: string | null;
+  reliability: number;
+}
+
+export interface RegionInfo {
+  name: string;
+  country: string;
+  admin1: string | null;
+  source: string;
+  detectedAt: string;
+}
+
+export interface EnvironmentalData {
+  elevation: number | null;
+  soilMoisture: number | null;
+  surfaceRunoff: number | null;
+  precipitationProbability: number | null;
 }
 
 export type WeatherFetchStatus = 'idle' | 'fetching' | 'success' | 'error';
@@ -645,6 +692,7 @@ export interface WeatherState {
   lastUpdated: string | null;
   pollIntervalMs: number;
   locationName: string;
+  region: RegionInfo | null;
 }
 
 // ===================== Live Risk Analysis Types =====================

@@ -25,6 +25,7 @@ import { searchLocations, type LocationSearchResult } from '@/services/weather';
 import { riskColor, riskLabel } from '@/utils/risk';
 
 const LOCATION_PRESETS = [
+  { name: 'Mumbai Pilot', lat: 19.0760, lon: 72.8777 },
   { name: 'Bengaluru Center', lat: 12.9716, lon: 77.5946 },
   { name: 'Demo Zone A', lat: 12.9756, lon: 77.5996 },
   { name: 'Demo Zone B', lat: 12.9656, lon: 77.5846 },
@@ -38,7 +39,8 @@ export function LiveIntelligencePanel() {
   const liveRisk = useStore((s) => s.liveRisk);
   const riskHistory = useStore((s) => s.riskHistory);
   const liveLocation = useStore((s) => s.liveLocation);
-  const fetchWeather = useStore((s) => s.fetchWeather);
+  const liveData = useStore((s) => s.liveData);
+  const fetchWeather = useStore((s) => s.refreshLiveData);
   const setLiveLocation = useStore((s) => s.setLiveLocation);
   const clearWeather = useStore((s) => s.clearWeather);
 
@@ -49,15 +51,26 @@ export function LiveIntelligencePanel() {
   const [locationResults, setLocationResults] = useState<LocationSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [locationSearchError, setLocationSearchError] = useState<string | null>(null);
+  const [latitudeInput, setLatitudeInput] = useState('');
+  const [longitudeInput, setLongitudeInput] = useState('');
 
   const handleLocationSelect = useCallback(
     (name: string, lat: number, lon: number) => {
       setLiveLocation(lat, lon, name);
-      setTimeout(() => fetchWeather(), 100);
     },
-    [setLiveLocation, fetchWeather]
+    [setLiveLocation]
   );
 
+  const handleCoordinatesSubmit = useCallback(() => {
+    const latitude = Number(latitudeInput);
+    const longitude = Number(longitudeInput);
+    if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      setLocationSearchError('Enter valid latitude (-90 to 90) and longitude (-180 to 180).');
+      return;
+    }
+    setLocationSearchError(null);
+    handleLocationSelect(`Coordinates ${latitude.toFixed(4)}, ${longitude.toFixed(4)}`, latitude, longitude);
+  }, [handleLocationSelect, latitudeInput, longitudeInput]);
   useEffect(() => {
     const query = locationQuery.trim();
     if (query.length < 2) {
@@ -98,7 +111,7 @@ export function LiveIntelligencePanel() {
     return () => clearInterval(interval);
   }, [autoRefresh, liveLocation, weather.pollIntervalMs, fetchWeather]);
 
-  const isFetching = weather.status === 'fetching';
+  const isFetching = weather.status === 'fetching' || liveData.status === 'loading';
   const hasData = weather.data !== null;
   const hasError = weather.status === 'error';
 
@@ -182,6 +195,11 @@ export function LiveIntelligencePanel() {
               ))}
             </div>
           )}
+        <div className="mt-2 grid grid-cols-[1fr_1fr_auto] gap-1.5">
+          <input value={latitudeInput} onChange={(event) => setLatitudeInput(event.target.value)} inputMode="decimal" placeholder="Latitude" aria-label="Latitude" className="rounded-lg border border-surface-200/40 bg-surface-200/20 px-2.5 py-2 text-xs text-white outline-none placeholder:text-surface-600 focus:border-cyan-500/50" />
+          <input value={longitudeInput} onChange={(event) => setLongitudeInput(event.target.value)} inputMode="decimal" placeholder="Longitude" aria-label="Longitude" className="rounded-lg border border-surface-200/40 bg-surface-200/20 px-2.5 py-2 text-xs text-white outline-none placeholder:text-surface-600 focus:border-cyan-500/50" />
+          <button onClick={handleCoordinatesSubmit} className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 text-[10px] font-bold text-cyan-400 hover:bg-cyan-500/20">USE COORDS</button>
+        </div>
         </div>
         {locationSearchError && <p className="mt-1 text-[10px] text-risk-medium">{locationSearchError}</p>}
       </div>
@@ -231,28 +249,41 @@ export function LiveIntelligencePanel() {
       {/* Weather data */}
       {hasData && weather.data && (
         <>
+          <div className="mb-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-cyan-400">
+              <MapPin className="w-3.5 h-3.5" />
+              {weather.data.region.name}, {weather.data.region.country}
+            </div>
+            <div className="mt-1 text-[10px] text-surface-600">
+              Region detected by {weather.data.region.source} at {new Date(weather.data.region.detectedAt).toLocaleTimeString()}
+            </div>
+          </div>
           {/* Weather grid */}
           <div className="grid grid-cols-2 gap-2 mb-4">
             <WeatherMetric
               icon={Thermometer}
               label="Temperature"
               value={`${weather.data.temperature}°C`}
+              provenance={weather.data.provenance.temperature}
             />
             <WeatherMetric
               icon={CloudRain}
               label="Precipitation"
               value={`${weather.data.precipitation} mm`}
               highlight={weather.data.precipitation > 1}
+              provenance={weather.data.provenance.precipitation}
             />
             <WeatherMetric
               icon={Droplets}
               label="Humidity"
               value={`${weather.data.humidity}%`}
+              provenance={weather.data.provenance.humidity}
             />
             <WeatherMetric
               icon={Wind}
               label="Wind Speed"
               value={`${weather.data.windSpeed} km/h`}
+              provenance={weather.data.provenance.windSpeed}
             />
           </div>
 
@@ -274,11 +305,28 @@ export function LiveIntelligencePanel() {
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <WeatherMetric
+              icon={Droplets}
+              label="Soil Moisture"
+              value={weather.data.environmental.soilMoisture === null ? 'Unavailable' : `${Math.round(weather.data.environmental.soilMoisture * 100)}%`}
+              highlight={weather.data.environmental.soilMoisture !== null && weather.data.environmental.soilMoisture > 0.4}
+              provenance={weather.data.provenance.environmental}
+            />
+            <WeatherMetric
+              icon={CloudRain}
+              label="Surface Runoff (3h)"
+              value={weather.data.environmental.surfaceRunoff === null ? 'Unavailable' : `${weather.data.environmental.surfaceRunoff.toFixed(1)} mm`}
+              highlight={weather.data.environmental.surfaceRunoff !== null && weather.data.environmental.surfaceRunoff > 2}
+              provenance={weather.data.provenance.environmental}
+            />
+          </div>
+
           {/* Timestamp */}
           <div className="flex items-center gap-2 text-[10px] text-surface-600 mb-4">
             <Clock className="w-3 h-3" />
             <span>
-              Last Updated: {new Date(weather.data.timestamp).toLocaleTimeString()}
+              Last Updated: {new Date(weather.data.timestamp).toLocaleTimeString()} · Open-Meteo
             </span>
             <span className="ml-auto flex items-center gap-1">
               <MapPin className="w-3 h-3" />
@@ -508,7 +556,7 @@ export function LiveIntelligencePanel() {
         </span>
         {hasData && (
           <span className="badge bg-risk-low/15 text-risk-low border border-risk-low/30 text-[8px]">
-            LIVE WEATHER: {weather.data?.source}
+            LIVE WEATHER: {weather.data?.source} · RELIABILITY {Math.round((weather.data?.provenance.temperature.reliability ?? 0) * 100)}%
           </span>
         )}
         {liveRisk && (
@@ -526,11 +574,13 @@ function WeatherMetric({
   label,
   value,
   highlight,
+  provenance,
 }: {
   icon: typeof Thermometer;
   label: string;
   value: string;
   highlight?: boolean;
+  provenance?: { status: string; source: string; observedAt: string | null; reliability: number };
 }) {
   return (
     <div
@@ -548,6 +598,14 @@ function WeatherMetric({
           {label}
         </span>
       </div>
+      {provenance && (
+        <div className="mt-1 flex items-center justify-between text-[8px] uppercase">
+          <span className={provenance.status === 'live' ? 'text-risk-low' : 'text-risk-medium'}>
+            {provenance.status}
+          </span>
+          <span className="text-surface-600">{Math.round(provenance.reliability * 100)}% reliable</span>
+        </div>
+      )}
       <p
         className={`text-sm font-bold ${highlight ? 'text-cyan-400' : 'text-white'}`}
       >

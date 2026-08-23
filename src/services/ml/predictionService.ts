@@ -46,7 +46,7 @@ export function zoneToFeatureVector(
     water_level_rise_rate: zone.riseRate,
     vault_capacity: 50, // zones don't have vaults; use average
     available_capacity: 100 - zone.waterLevel,
-    elevation: zone.elevation,
+    elevation: liveWeather?.environmental.elevation ?? zone.elevation,
     drainage_capacity: zone.drainageCapacity,
     historical_flood_frequency: zone.historicalFloodFrequency,
     time_of_day: timeOfDay,

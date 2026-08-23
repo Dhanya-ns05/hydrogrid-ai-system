@@ -1,4 +1,4 @@
-import type { LiveWeatherData } from '@/types';
+import type { LiveWeatherData, RegionInfo } from '@/types';
 
 const OPEN_METEO_CURRENT_URL = 'https://api.open-meteo.com/v1/forecast';
 const OPEN_METEO_GEOCODING_URL = 'https://geocoding-api.open-meteo.com/v1/search';
@@ -10,6 +10,8 @@ export interface LocationSearchResult {
   country?: string;
   admin1?: string;
 }
+
+const NOMINATIM_REVERSE_URL = 'https://nominatim.openstreetmap.org/reverse';
 const WEATHER_CODE_MAP: Record<number, string> = {
   0: 'Clear sky',
   1: 'Mainly clear',
@@ -70,6 +72,28 @@ export async function searchLocations(query: string): Promise<LocationSearchResu
     : [];
 }
 
+export async function reverseGeocode(latitude: number, longitude: number): Promise<RegionInfo> {
+  const params = new URLSearchParams({
+    lat: latitude.toFixed(5),
+    lon: longitude.toFixed(5),
+    format: 'jsonv2',
+    zoom: '10',
+  });
+  const res = await fetch(`${NOMINATIM_REVERSE_URL}?${params.toString()}`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) throw new Error(`Region API returned ${res.status}: ${res.statusText}`);
+  const json = await res.json();
+  const address = json.address ?? {};
+  return {
+    name: address.city ?? address.town ?? address.municipality ?? address.village ?? 'Unknown region',
+    country: address.country ?? 'Unknown country',
+    admin1: address.state ?? null,
+    source: 'OpenStreetMap Nominatim',
+    detectedAt: new Date().toISOString(),
+  };
+}
+
 export async function getCurrentWeather(
   latitude: number,
   longitude: number
@@ -83,9 +107,10 @@ export async function getCurrentWeather(
       'precipitation',
       'weather_code',
       'wind_speed_10m',
+      'soil_moisture_0_to_1cm',
     ].join(','),
-    forecast_days: '1',
-    hourly: 'precipitation',
+    forecast_days: '2',
+    hourly: 'precipitation,surface_runoff,soil_moisture_0_to_7cm,precipitation_probability',
     timezone: 'auto',
   });
 
@@ -107,6 +132,9 @@ export async function getCurrentWeather(
   const precipitation: number = current.precipitation ?? 0;
 
   let forecastPrecipitation = 0;
+  let surfaceRunoff: number | null = null;
+  let soilMoisture: number | null = current.soil_moisture_0_to_1cm ?? null;
+  let precipitationProbability: number | null = null;
   if (json.hourly && Array.isArray(json.hourly.precipitation)) {
     const now = new Date();
     const times: string[] = json.hourly.time ?? [];
@@ -115,6 +143,12 @@ export async function getCurrentWeather(
     if (nextHourIdx >= 0 && nextHourIdx < precip.length) {
       const nextHours = precip.slice(nextHourIdx, Math.min(nextHourIdx + 3, precip.length));
       forecastPrecipitation = nextHours.reduce((sum: number, v: number) => sum + (v ?? 0), 0);
+      const runoff = json.hourly.surface_runoff?.slice(nextHourIdx, nextHourIdx + 3) ?? [];
+      const soil = json.hourly.soil_moisture_0_to_7cm?.[nextHourIdx];
+      const probability = json.hourly.precipitation_probability?.[nextHourIdx];
+      surfaceRunoff = runoff.length ? runoff.reduce((sum: number, v: number) => sum + (v ?? 0), 0) : null;
+      soilMoisture = soilMoisture ?? (typeof soil === 'number' ? soil : null);
+      precipitationProbability = typeof probability === 'number' ? probability : null;
     }
   }
 
@@ -130,5 +164,25 @@ export async function getCurrentWeather(
     forecastPrecipitation: Math.round(forecastPrecipitation * 10) / 10,
     timestamp: new Date().toISOString(),
     source: 'Open-Meteo',
+    region: {
+      name: 'Pending region detection',
+      country: '',
+      admin1: null,
+      source: 'OpenStreetMap Nominatim',
+      detectedAt: new Date().toISOString(),
+    },
+    environmental: {
+      elevation: typeof json.elevation === 'number' ? json.elevation : null,
+      soilMoisture,
+      surfaceRunoff,
+      precipitationProbability,
+    },
+    provenance: {
+      temperature: { status: 'live', source: 'Open-Meteo', observedAt: new Date().toISOString(), reliability: 0.95 },
+      precipitation: { status: 'live', source: 'Open-Meteo', observedAt: new Date().toISOString(), reliability: 0.95 },
+      humidity: { status: 'live', source: 'Open-Meteo', observedAt: new Date().toISOString(), reliability: 0.95 },
+      windSpeed: { status: 'live', source: 'Open-Meteo', observedAt: new Date().toISOString(), reliability: 0.95 },
+      environmental: { status: 'live', source: 'Open-Meteo', observedAt: new Date().toISOString(), reliability: 0.9 },
+    },
   };
 }

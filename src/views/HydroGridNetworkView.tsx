@@ -1,7 +1,6 @@
 import { useStore } from '@/store/useStore';
-import { VAULT_NETWORK_CONNECTIONS } from '@/data/mockData';
 import { riskColor, riskLabel, vaultStatusLabel, vaultStatusColor } from '@/utils/risk';
-import { Database, ArrowRight, GitBranch } from 'lucide-react';
+import { AlertTriangle, Database, ArrowRight, GitBranch, LoaderCircle } from 'lucide-react';
 import { useState } from 'react';
 import type { Vault } from '@/types';
 import { ScenarioButtons } from '@/components/ScenarioButtons';
@@ -13,28 +12,46 @@ import { BaselineRoutingComparison } from '@/components/BaselineRoutingCompariso
 
 export function HydroGridNetworkView() {
   const vaults = useStore((s) => s.vaults);
+  const dataMode = useStore((s) => s.dataMode);
+  const liveData = useStore((s) => s.liveData);
   const [selectedVault, setSelectedVault] = useState<string | null>(null);
 
   const selected = vaults.find((v) => v.id === selectedVault);
+  const networkUnavailable = dataMode === 'live' && (liveData.network.status !== 'live' || vaults.length === 0);
+  const sourceLabel = dataMode === 'live' ? 'Live backend data' : 'Simulation data';
 
   return (
     <div className="flex flex-col gap-5 animate-fade-in">
       <div>
         <h2 className="text-xl font-bold text-white tracking-tight">HydroGrid Vault Network</h2>
         <p className="text-sm text-surface-600 mt-1">
-          Virtual stormwater vault monitoring - 5 nodes - Simulated data
+          Virtual stormwater vault monitoring - {sourceLabel}
         </p>
+        {dataMode === 'live' && liveData.network.status === 'live' && (
+          <p className="text-[10px] text-surface-600 mt-2">
+            Source: {liveData.network.source} | Updated: {liveData.network.lastUpdated ? new Date(liveData.network.lastUpdated).toLocaleString() : 'Never'} | LIVE
+          </p>
+        )}
       </div>
 
       {/* Vault Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-        {vaults.map((vault) => (
-          <VaultCard key={vault.id} vault={vault} onClick={() => setSelectedVault(vault.id)} />
-        ))}
-      </div>
+      {networkUnavailable ? (
+        <NetworkState
+          status={liveData.status === 'loading' ? 'loading' : 'unavailable'}
+          source={liveData.network.source}
+          lastUpdated={liveData.network.lastUpdated}
+          error={liveData.network.error ?? liveData.error}
+        />
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+          {vaults.map((vault) => (
+            <VaultCard key={vault.id} vault={vault} onClick={() => setSelectedVault(vault.id)} />
+          ))}
+        </div>
+      )}
 
       {/* Network Visualization + Detail */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      {!networkUnavailable && <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2 card p-6">
           <h3 className="text-sm font-bold text-white tracking-wide uppercase mb-4">
             Network Topology
@@ -59,10 +76,10 @@ export function HydroGridNetworkView() {
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Smart Water Routing Section */}
-      <div className="flex flex-col gap-5">
+      {!networkUnavailable && <div className="flex flex-col gap-5">
         <div className="flex items-center gap-2">
           <GitBranch className="w-5 h-5 text-primary-400" />
           <h3 className="text-lg font-bold text-white tracking-tight">Smart Water Routing</h3>
@@ -84,7 +101,21 @@ export function HydroGridNetworkView() {
         <DestinationComparisonTable sourceVaultId={vaults.slice().sort((a, b) => b.currentLevel - a.currentLevel)[0]?.id || ''} />
         <BaselineRoutingComparison sourceVaultId={vaults.slice().sort((a, b) => b.currentLevel - a.currentLevel)[0]?.id || ''} />
         <RoutingAnalytics />
-      </div>
+      </div>}
+    </div>
+  );
+}
+
+function NetworkState({ status, source, lastUpdated, error }: { status: 'loading' | 'unavailable'; source: string; lastUpdated: string | null; error: string | null }) {
+  const loading = status === 'loading';
+  return (
+    <div className="card flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
+      {loading ? <LoaderCircle className="h-8 w-8 animate-spin text-primary-400" /> : <AlertTriangle className="h-8 w-8 text-risk-medium" />}
+      <p className="text-sm font-semibold text-white">{loading ? 'Loading network data' : 'Vault Network data unavailable'}</p>
+      <p className="max-w-lg text-xs text-surface-600">
+        {error ?? 'The live backend returned no water-network nodes for this location.'}
+      </p>
+      <p className="text-[10px] text-surface-600">Source: {source} | Last successful update: {lastUpdated ? new Date(lastUpdated).toLocaleString() : 'Never'} | UNAVAILABLE</p>
     </div>
   );
 }
@@ -178,19 +209,17 @@ function NetworkGraph({
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
-  // Layout: HG-01 top-left, HG-02 top-right, HG-03 bottom-left, HG-04 bottom-right, HG-05 far-bottom-right
-  const positions: Record<string, { x: number; y: number }> = {
-    'HG-01': { x: 20, y: 15 },
-    'HG-02': { x: 70, y: 15 },
-    'HG-03': { x: 20, y: 60 },
-    'HG-04': { x: 70, y: 60 },
-    'HG-05': { x: 70, y: 90 },
-  };
+  const positions = Object.fromEntries(
+    vaults.map((vault, index) => [vault.id, { x: 15 + (index % 3) * 35, y: 20 + Math.floor(index / 3) * 55 }])
+  ) as Record<string, { x: number; y: number }>;
+  const connections = vaults.flatMap((vault) => vault.connectedVaults
+    .filter((id) => vaults.some((candidate) => candidate.id === id) && vault.id < id)
+    .map((id) => ({ from: vault.id, to: id })));
 
   return (
     <div className="relative w-full" style={{ height: '420px' }}>
       <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-        {VAULT_NETWORK_CONNECTIONS.map((conn, i) => {
+        {connections.map((conn, i) => {
           const from = positions[conn.from];
           const to = positions[conn.to];
           if (!from || !to) return null;

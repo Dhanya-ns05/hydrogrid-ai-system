@@ -20,6 +20,9 @@ interface RiskInputs {
   zoneDrainageCapacity: number;
   zoneHistoricalFloodFrequency: number;
   zoneRiseRate: number;
+  elevation?: number | null;
+  soilMoisture?: number | null;
+  surfaceRunoff?: number | null;
 }
 
 export function calculateLiveRisk(
@@ -93,8 +96,34 @@ export function calculateLiveRisk(
     source: 'simulated',
   });
 
+  const runoff = inputs.surfaceRunoff;
+  if (runoff !== null && runoff !== undefined) {
+    const runoffScore = Math.min(10, runoff * 2);
+    factors.push({
+      label: 'Surface Runoff (3h)',
+      value: `${runoff.toFixed(1)} mm`,
+      contribution: Math.round(runoffScore),
+      direction: runoffScore > 4 ? 'up' : 'stable',
+      source: 'live',
+    });
+  }
+
+  const soilMoisture = inputs.soilMoisture;
+  if (soilMoisture !== null && soilMoisture !== undefined) {
+    const soilScore = Math.min(8, soilMoisture * 8);
+    factors.push({
+      label: 'Soil Moisture',
+      value: `${Math.round(soilMoisture * 100)}%`,
+      contribution: Math.round(soilScore),
+      direction: soilScore > 4 ? 'up' : 'stable',
+      source: 'live',
+    });
+  }
+
   const totalScore = Math.min(100, Math.max(0, Math.round(
-    rainfallScore + forecastScore + Math.max(0, humidityScore) + waterLevelScore + drainageScore + historyScore
+    rainfallScore + forecastScore + Math.max(0, humidityScore) + waterLevelScore + drainageScore + historyScore +
+    (runoff !== null && runoff !== undefined ? Math.min(10, runoff * 2) : 0)
+    + (soilMoisture !== null && soilMoisture !== undefined ? Math.min(8, soilMoisture * 8) : 0)
   )));
 
   const level = riskLevelFromScore(totalScore);
@@ -132,5 +161,5 @@ export function getZoneForLocation(
       closest = zone;
     }
   }
-  return closest;
+  return minDist <= 0.08 ? closest : null;
 }

@@ -61,8 +61,12 @@ export function usePredictionEngine(horizon: PredictionHorizon = 10) {
           return distance < nearestDistance ? zone : nearest;
         }, null)
       : null;
+    const liveZoneDistance = liveLocation && liveZone
+      ? Math.hypot(liveZone.latitude - liveLocation.latitude, liveZone.longitude - liveLocation.longitude)
+      : Infinity;
+    const matchedLiveZone = liveZoneDistance <= 0.08 ? liveZone : null;
     const zonePredictions = floodZones.map((zone) =>
-      predictZone(model, zone, horizon, timeOfDay, null, zone.id === liveZone?.id ? weather.data : null)
+      predictZone(model, zone, horizon, timeOfDay, null, zone.id === matchedLiveZone?.id ? weather.data : null)
     );
 
     setPredictions([...vaultPredictions, ...zonePredictions]);

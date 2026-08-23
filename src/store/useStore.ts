@@ -40,11 +40,10 @@ import type {
   EmergencyResponseState,
   EmergencyResponseStatus,
   AmbulanceSelectionResult,
-  LiveWeatherData,
   WeatherState,
-  WeatherFetchStatus,
   LiveRiskAnalysis,
   RiskHistoryEntry,
+  LiveDataState,
 } from '@/types';
 import {
   INITIAL_FLOOD_ZONES,
@@ -71,8 +70,8 @@ import { createInitialTwinState, buildTwinEntities, toggleTwinView, setTwinPlayi
 import { predictAllZones, predictZoneRisk, shouldTriggerEmergency, getPredictionMethodology } from '@/services/prediction';
 import { selectAmbulance } from '@/services/ambulanceRouting';
 import { getDataMode, getDataSourceInfo, setDataMode as setHydroDataMode, isLiveMode } from '@/services/hydroData';
-import { getCurrentWeather } from '@/services/weather';
-import { calculateLiveRisk, getZoneForLocation, riskLevelFromScore as liveRiskLevelFromScore } from '@/services/liveRiskAnalysis';
+import { fetchLiveData as fetchBackendLiveData, getLiveDataEndpoint } from '@/services/liveData';
+import { calculateLiveRisk, getZoneForLocation } from '@/services/liveRiskAnalysis';
 
 export interface AppState {
   floodZones: FloodZone[];
@@ -133,6 +132,7 @@ export interface AppState {
   liveRisk: LiveRiskAnalysis | null;
   riskHistory: RiskHistoryEntry[];
   liveLocation: { latitude: number; longitude: number; name: string } | null;
+  liveData: LiveDataState;
 }
 
 export interface AppActions {
@@ -190,6 +190,7 @@ export interface AppActions {
   // Live weather + risk actions
   setLiveLocation: (lat: number, lon: number, name: string) => void;
   fetchWeather: () => Promise<void>;
+  refreshLiveData: () => Promise<void>;
   setWeatherPollInterval: (ms: number) => void;
   clearWeather: () => void;
 }
@@ -456,10 +457,26 @@ function getInitialState(): AppState {
       lastUpdated: null,
       pollIntervalMs: 300000,
       locationName: 'Bengaluru',
+      region: null,
     },
     liveRisk: null,
     riskHistory: [],
-    liveLocation: null,
+    liveLocation: { latitude: 19.0760, longitude: 72.8777, name: 'Mumbai Pilot' },
+    liveData: {
+      status: 'idle',
+      selectedLocation: null,
+      source: null,
+      lastUpdated: null,
+      nextRefreshAt: null,
+      error: null,
+      dataStatus: 'UNAVAILABLE',
+      network: {
+        status: 'unavailable',
+        source: 'Backend vault network service',
+        lastUpdated: null,
+        error: 'No live vault network response received',
+      },
+    },
   };
 }
 
@@ -1861,96 +1878,109 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
   setLiveLocation: (lat, lon, name) =>
     set((state) => ({
       liveLocation: { latitude: lat, longitude: lon, name },
-      weather: { ...state.weather, locationName: name },
+      liveData: { ...state.liveData, selectedLocation: { latitude: lat, longitude: lon, name }, error: null },
+      weather: { ...state.weather, locationName: name, region: null },
     })),
 
-  fetchWeather: async () => {
-    const state = get();
-    const loc = state.liveLocation;
-    if (!loc) return;
-
-    set({
-      weather: { ...state.weather, status: 'fetching', error: null },
-    });
-
+  refreshLiveData: async () => {
+    const location = get().liveLocation;
+    if (!location) return;
+    set((state) => ({
+      liveData: { ...state.liveData, status: 'loading', error: null },
+    }));
     try {
-      const weatherData = await getCurrentWeather(loc.latitude, loc.longitude);
-
-      const zone = getZoneForLocation(loc.latitude, loc.longitude, state.floodZones);
-      const prevScore = state.liveRisk?.score ?? 0;
-      const prevLevel = state.liveRisk?.level ?? 'low';
-
+      const result = await fetchBackendLiveData(location);
+      const currentState = get();
+      const zone = getZoneForLocation(location.latitude, location.longitude, currentState.floodZones);
       const risk = calculateLiveRisk(
         {
-          weather: weatherData,
-          zoneWaterLevel: zone?.waterLevel ?? 50,
-          zoneDrainageCapacity: zone?.drainageCapacity ?? 60,
-          zoneHistoricalFloodFrequency: zone?.historicalFloodFrequency ?? 0.3,
+          weather: result.weather,
+          zoneWaterLevel: zone?.waterLevel ?? 0,
+          zoneDrainageCapacity: zone?.drainageCapacity ?? 0,
+          zoneHistoricalFloodFrequency: zone?.historicalFloodFrequency ?? 0,
           zoneRiseRate: zone?.riseRate ?? 0,
+          elevation: result.weather.environmental.elevation,
+          soilMoisture: result.weather.environmental.soilMoisture,
+          surfaceRunoff: result.weather.environmental.surfaceRunoff,
         },
-        prevScore,
-        prevLevel
+        currentState.liveRisk?.score ?? 0,
+        currentState.liveRisk?.level ?? 'low'
       );
-
       const historyEntry: RiskHistoryEntry = {
-        timestamp: weatherData.timestamp,
-        location: loc.name,
-        temperature: weatherData.temperature,
-        precipitation: weatherData.precipitation,
-        humidity: weatherData.humidity,
-        windSpeed: weatherData.windSpeed,
-        forecastPrecipitation: weatherData.forecastPrecipitation,
+        timestamp: result.weather.timestamp,
+        location: location.name,
+        temperature: result.weather.temperature,
+        precipitation: result.weather.precipitation,
+        humidity: result.weather.humidity,
+        windSpeed: result.weather.windSpeed,
+        forecastPrecipitation: result.weather.forecastPrecipitation,
         riskScore: risk.score,
         riskLevel: risk.level,
         dataSource: 'live',
       };
-
-      const newEventLog = [
-        makeEventLogEntry('weather', 'info',
-          `Live weather fetched for ${loc.name}: ${weatherData.weatherDescription}, ${weatherData.temperature}°C, ${weatherData.precipitation}mm precipitation. Risk: ${risk.level.toUpperCase()} (${risk.score}/100).`),
-        ...state.eventLog,
-      ].slice(0, 100);
-
       set({
+        liveData: result.state,
+        floodZones: result.entities.floodZones ?? [],
+        vaults: result.entities.vaults ?? [],
+        roadSegments: result.entities.roads ?? [],
+        alerts: result.entities.alerts ?? [],
+        riskPredictions: result.entities.predictions ?? [],
+        weather: {
+          data: result.weather,
+          status: 'success',
+          error: null,
+          lastUpdated: result.state.lastUpdated,
+          pollIntervalMs: 300000,
+          locationName: result.state.selectedLocation?.name ?? location.name,
+          region: result.weather.region,
+        },
+        liveRisk: risk,
+        riskHistory: [...currentState.riskHistory, historyEntry].slice(-50),
         dataMode: 'live',
         dataSourceInfo: {
           mode: 'live',
           status: 'connected',
-          provider: weatherData.source,
-          lastFetch: weatherData.timestamp,
+          provider: result.weather.source,
+          lastFetch: result.state.lastUpdated,
           errorMessage: null,
         },
-        weather: {
-          data: weatherData,
-          status: 'success',
-          error: null,
-          lastUpdated: weatherData.timestamp,
-          pollIntervalMs: state.weather.pollIntervalMs,
-          locationName: loc.name,
-        },
-        liveRisk: risk,
-        riskHistory: [...state.riskHistory, historyEntry].slice(-50),
-        eventLog: newEventLog,
       });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch weather data';
-      set({
-        dataMode: 'simulation',
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Backend live data unavailable';
+      set((state) => ({
+        liveData: {
+          ...state.liveData,
+          status: 'unavailable',
+          source: getLiveDataEndpoint(),
+          nextRefreshAt: null,
+          error: message,
+          dataStatus: 'UNAVAILABLE',
+          network: {
+            status: 'unavailable',
+            source: getLiveDataEndpoint(),
+            lastUpdated: null,
+            error: message,
+          },
+        },
+        dataMode: 'live',
+        floodZones: [],
+        vaults: [],
+        roadSegments: [],
+        alerts: [],
+        riskPredictions: [],
         dataSourceInfo: {
           mode: 'live',
-          status: 'fallback',
-          provider: 'Simulation Engine',
-          lastFetch: null,
-          errorMessage: `${errorMessage}. Using simulation data.`,
-        },
-        weather: {
-          ...state.weather,
           status: 'error',
-          error: errorMessage,
+          provider: getLiveDataEndpoint(),
+          lastFetch: state.liveData.lastUpdated,
+          errorMessage: 'Live data unavailable. No simulated values loaded.',
         },
-      });
+        weather: { ...state.weather, data: null, status: 'error', error: message },
+      }));
     }
   },
+
+  fetchWeather: async () => get().refreshLiveData(),
 
   setWeatherPollInterval: (ms) =>
     set((state) => ({
@@ -1966,6 +1996,7 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
         lastUpdated: null,
         pollIntervalMs: state.weather.pollIntervalMs,
         locationName: state.weather.locationName,
+        region: null,
       },
       liveRisk: null,
     })),
