@@ -44,6 +44,7 @@ import type {
   LiveRiskAnalysis,
   RiskHistoryEntry,
   LiveDataState,
+  LiveSnapshot,
 } from '@/types';
 import {
   INITIAL_FLOOD_ZONES,
@@ -70,7 +71,7 @@ import { createInitialTwinState, buildTwinEntities, toggleTwinView, setTwinPlayi
 import { predictAllZones, predictZoneRisk, shouldTriggerEmergency, getPredictionMethodology } from '@/services/prediction';
 import { selectAmbulance } from '@/services/ambulanceRouting';
 import { getDataMode, getDataSourceInfo, setDataMode as setHydroDataMode, isLiveMode } from '@/services/hydroData';
-import { fetchLiveData as fetchBackendLiveData, getLiveDataEndpoint } from '@/services/liveData';
+import { fetchLiveData as fetchBackendLiveData, fetchLiveRoute, fetchLiveSnapshots, getLiveDataEndpoint } from '@/services/liveData';
 import { calculateLiveRisk, getZoneForLocation } from '@/services/liveRiskAnalysis';
 
 export interface AppState {
@@ -133,6 +134,7 @@ export interface AppState {
   riskHistory: RiskHistoryEntry[];
   liveLocation: { latitude: number; longitude: number; name: string } | null;
   liveData: LiveDataState;
+  liveSnapshots: LiveSnapshot[];
 }
 
 export interface AppActions {
@@ -155,7 +157,7 @@ export interface AppActions {
   setSelectedAmbulance: (id: string) => void;
   setSelectedHospital: (id: string) => void;
   setRouteCostWeights: (weights: Partial<RouteCostWeights>) => void;
-  calculateEmergencyRoutes: () => void;
+  calculateEmergencyRoutes: () => Promise<void>;
   clearEmergencyRoutes: () => void;
   runEmergencyDemo: () => void;
   // Full system integration actions
@@ -193,6 +195,7 @@ export interface AppActions {
   refreshLiveData: () => Promise<void>;
   setWeatherPollInterval: (ms: number) => void;
   clearWeather: () => void;
+  liveSnapshots: LiveSnapshot[];
 }
 
 export type Store = AppState & AppActions;
@@ -305,7 +308,9 @@ function computeKPIs(state: AppState): KPIData {
   const criticalVaults = state.vaults.filter(
     (v) => v.riskLevel === 'critical' || v.riskLevel === 'high'
   ).length;
-  const highestRisk = Math.max(...state.floodZones.map((z) => z.riskScore));
+  const highestRisk = state.floodZones.length > 0
+    ? Math.max(...state.floodZones.map((z) => z.riskScore))
+    : 0;
   const routesAffected = state.roadSegments.filter((r) => !r.accessible).length;
 
   return {
@@ -477,6 +482,7 @@ function getInitialState(): AppState {
         error: 'No live vault network response received',
       },
     },
+    liveSnapshots: [],
   };
 }
 
@@ -1035,7 +1041,35 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
       routeCostWeights: { ...state.routeCostWeights, ...weights },
     })),
 
-  calculateEmergencyRoutes: () =>
+  calculateEmergencyRoutes: async () => {
+    const state = get();
+    if (state.dataMode === 'live') {
+      const hospital = state.emergencyHospitals.find((item) => item.id === state.selectedHospitalId);
+      if (!state.liveLocation || !hospital) return;
+      set({ emergencyRouteSet: null });
+      try {
+        const liveRoute = await fetchLiveRoute(state.liveLocation, hospital);
+        const floodRisk = state.liveRisk?.level ?? 'low';
+        const result = {
+          type: 'recommended' as const,
+          path: [], nodePath: [], coordinates: liveRoute.coordinates,
+          distance: liveRoute.distance, estimatedTime: liveRoute.duration,
+          floodRisk, floodRiskScore: state.liveRisk?.score ?? 0, trafficLevel: 0,
+          blockedRoads: 0, floodedSegments: 0, routeScore: Math.max(0, 100 - (state.liveRisk?.score ?? 0)),
+          status: 'recommended' as const,
+          reasons: [`Live route from ${state.liveLocation.name}`, `Destination: ${hospital.name}`, `Provider: ${liveRoute.source}`],
+        };
+        const routeSet: EmergencyRouteSet = {
+          ambulanceId: 'LIVE-ORIGIN', hospitalId: hospital.id,
+          fastest: { ...result, type: 'fastest' }, safest: { ...result, type: 'safest' }, recommended: result,
+          hasSafeRoute: true, floodCondition: floodRisk, calculatedAt: new Date().toISOString(),
+        };
+        set({ emergencyRouteSet: routeSet });
+      } catch (error) {
+        set((current) => ({ liveData: { ...current.liveData, error: error instanceof Error ? error.message : 'Live route unavailable' }, emergencyRouteSet: null }));
+      }
+      return;
+    }
     set((state) => {
       const ambId = state.selectedAmbulanceId;
       const hospId = state.selectedHospitalId;
@@ -1088,7 +1122,8 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
         },
         eventLog: newEventLog,
       };
-    }),
+    });
+  },
 
   clearEmergencyRoutes: () => set({ emergencyRouteSet: null }),
 
@@ -1914,6 +1949,7 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
     }));
     try {
       const result = await fetchBackendLiveData(location);
+      const snapshots = await fetchLiveSnapshots().catch(() => []);
       const currentState = get();
       const zone = getZoneForLocation(location.latitude, location.longitude, currentState.floodZones);
       const risk = calculateLiveRisk(
@@ -1950,6 +1986,15 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
         floodZones: result.entities.floodZones ?? [],
         vaults: result.entities.vaults ?? [],
         roadSegments: result.entities.roads ?? [],
+        hospitals: (result.hospitals ?? []) as Hospital[],
+        emergencyHospitals: (result.hospitals ?? []) as Hospital[],
+        emergencyAmbulances: result.hospitals?.length ? [{
+          id: 'LIVE-ORIGIN', latitude: location.latitude, longitude: location.longitude,
+          currentZone: location.name, destinationHospital: result.hospitals[0].name,
+          routeStatus: 'clear', alternativeAvailable: false,
+        }] : [],
+        selectedAmbulanceId: 'LIVE-ORIGIN',
+        selectedHospitalId: result.hospitals?.[0]?.id ?? '',
         alerts: result.entities.alerts ?? [],
         riskPredictions: result.entities.predictions ?? [],
         weather: {
@@ -1963,6 +2008,7 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
         },
         liveRisk: risk,
         riskHistory: [...currentState.riskHistory, historyEntry].slice(-50),
+        liveSnapshots: snapshots,
         dataMode: 'live',
         dataSourceInfo: {
           mode: 'live',
@@ -1993,6 +2039,10 @@ export const useStore = create<AppState & AppActions>((set, get) => ({
         floodZones: [],
         vaults: [],
         roadSegments: [],
+        hospitals: [],
+        emergencyHospitals: [],
+        emergencyAmbulances: [],
+        selectedHospitalId: '',
         alerts: [],
         riskPredictions: [],
         dataSourceInfo: {

@@ -22,6 +22,20 @@ export function AnalyticsView() {
   const vaults = useStore((s) => s.vaults);
   const simulation = useStore((s) => s.simulation);
   const waterDiverted = useStore((s) => s.waterDiverted);
+  const dataMode = useStore((s) => s.dataMode);
+  const liveSnapshots = useStore((s) => s.liveSnapshots);
+
+  if (dataMode === 'live' && liveSnapshots.length === 0) {
+    return <div className="card flex min-h-64 flex-col items-center justify-center gap-2 p-6 text-center">
+      <h2 className="text-xl font-bold text-white">Analytics data unavailable</h2>
+      <p className="text-sm text-surface-600">Live snapshots will appear after the first successful provider response.</p>
+    </div>;
+  }
+
+  const liveTrend = liveSnapshots.map((snapshot) => ({
+    time: new Date(snapshot.observedAt).toLocaleTimeString(),
+    rainfall: snapshot.weather.precipitation,
+  }));
 
   // Zone risk comparison
   const zoneData = zones.map((z) => ({
@@ -45,30 +59,30 @@ export function AnalyticsView() {
   })) || [];
 
   // Rainfall trend (simulated from zone data)
-  const rainfallTrend = zones[0]?.history.map((h, i) => ({
+  const rainfallTrend = dataMode === 'live' ? liveTrend : zones[0]?.history.map((h, i) => ({
     time: `T${i}`,
     rainfall: Math.round(simulation.rainfallIntensity * (0.8 + Math.sin(i / 3) * 0.2)),
   })) || [];
 
   // Radial gauge for highest risk
-  const highestRisk = Math.max(...zones.map((z) => z.riskScore));
-  const radialData = [{ name: 'Risk', value: highestRisk, fill: riskColor(zones[0]?.riskLevel || 'high') }];
+  const highestRisk = zones.length > 0 ? Math.max(...zones.map((z) => z.riskScore)) : null;
+  const radialData = [{ name: 'Risk', value: highestRisk ?? 0, fill: riskColor(zones[0]?.riskLevel || 'low') }];
 
   return (
     <div className="flex flex-col gap-5 animate-fade-in">
       <div>
         <h2 className="text-xl font-bold text-white tracking-tight">Analytics</h2>
         <p className="text-sm text-surface-600 mt-1">
-          Flood risk and vault capacity analytics - Simulated data
+          Flood risk and vault capacity analytics - {dataMode === 'live' ? 'Live snapshots' : 'Simulation data'}
         </p>
       </div>
 
       {/* Summary Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SummaryCard label="Total Water Diverted" value={`${waterDiverted.toLocaleString()} L`} />
-        <SummaryCard label="Average Vault Fill" value={`${Math.round(vaults.reduce((a, v) => a + v.currentLevel, 0) / vaults.length)}%`} />
+        <SummaryCard label="Average Vault Fill" value={vaults.length ? `${Math.round(vaults.reduce((a, v) => a + v.currentLevel, 0) / vaults.length)}%` : 'No data'} />
         <SummaryCard label="Active Zones" value={`${zones.filter((z) => z.riskLevel !== 'low').length}`} />
-        <SummaryCard label="Simulation Tick" value={`${simulation.tick}`} />
+        <SummaryCard label={dataMode === 'live' ? 'Snapshots' : 'Simulation Tick'} value={dataMode === 'live' ? `${liveSnapshots.length}` : `${simulation.tick}`} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -161,7 +175,7 @@ export function AnalyticsView() {
               </RadialBarChart>
             </ResponsiveContainer>
             <div className="flex-1">
-              <p className="text-4xl font-bold text-white">{Math.round(highestRisk)}%</p>
+              <p className="text-4xl font-bold text-white">{highestRisk === null ? 'No data' : `${Math.round(highestRisk)}%`}</p>
               <p className="text-xs text-surface-600 mt-1">Peak Risk Score</p>
               <div className="mt-3 space-y-1.5">
                 {zones.map((z) => (

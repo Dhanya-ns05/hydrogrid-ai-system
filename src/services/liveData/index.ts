@@ -1,9 +1,10 @@
-import type { Alert, FloodZone, LiveDataState, LiveWeatherData, RegionInfo, RiskPrediction, RoadSegment, Vault } from '@/types';
+import type { Alert, FloodZone, LiveDataState, LiveSnapshot, LiveWeatherData, RegionInfo, RiskPrediction, RoadSegment, Vault } from '@/types';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_API_URL ?? '/api/live-data';
 const REFRESH_INTERVAL_MS = 300000;
+const SNAPSHOT_ENDPOINT = BACKEND_URL.replace(/\/live-data\/?$/, '/live-snapshots');
 const ROUTE_ENDPOINT = import.meta.env.VITE_BACKEND_API_URL
-  ? new URL('../live-route', import.meta.env.VITE_BACKEND_API_URL).toString()
+  ? import.meta.env.VITE_BACKEND_API_URL.replace(/\/live-data\/?$/, '/live-route')
   : '/api/live-route';
 
 export interface LiveDataRequest {
@@ -30,6 +31,8 @@ export interface LiveDataResponse {
   alerts?: Alert[];
   predictions?: RiskPrediction[];
   network?: LiveDataState['network'];
+  hospitals?: { id: string; name: string; latitude: number; longitude: number }[];
+  dataQuality?: { hospitals: string; vaults: string; flood: string; errors: string[] };
   risk?: { score: number; level: 'low' | 'medium' | 'high' | 'critical'; basis?: string[] };
   floodData?: { riverDischarge?: number; source?: string | null; observedAt?: string | null; error?: string | null };
 }
@@ -38,6 +41,8 @@ export interface LiveDataResult {
   weather: LiveWeatherData;
   state: LiveDataState;
   entities: Pick<LiveDataResponse, 'floodZones' | 'vaults' | 'roads' | 'alerts' | 'predictions'>;
+  hospitals: LiveDataResponse['hospitals'];
+  dataQuality?: LiveDataResponse['dataQuality'];
   risk?: LiveDataResponse['risk'];
 }
 
@@ -122,6 +127,8 @@ export async function fetchLiveData(request: LiveDataRequest): Promise<LiveDataR
       alerts: payload.alerts,
       predictions: payload.predictions,
     },
+    hospitals: payload.hospitals,
+    dataQuality: payload.dataQuality,
     risk: payload.risk,
   };
 }
@@ -136,6 +143,13 @@ export async function fetchLiveRoute(origin: LiveDataRequest, destination: LiveD
   const response = await fetch(`${ROUTE_ENDPOINT}?${params}`);
   if (!response.ok) throw new Error(`Live routing API returned ${response.status}`);
   return response.json() as Promise<LiveRoute>;
+}
+
+export async function fetchLiveSnapshots(): Promise<LiveSnapshot[]> {
+  const response = await fetch(SNAPSHOT_ENDPOINT, { headers: { Accept: 'application/json' } });
+  if (!response.ok) throw new Error(`Live snapshot API returned ${response.status}`);
+  const payload = (await response.json()) as { snapshots?: LiveSnapshot[] };
+  return Array.isArray(payload.snapshots) ? payload.snapshots : [];
 }
 
 export function getLiveDataRefreshInterval(): number {

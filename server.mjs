@@ -1,5 +1,7 @@
 import http from 'node:http';
 import { URL } from 'node:url';
+import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const WEATHER_API = 'https://api.open-meteo.com/v1/forecast';
@@ -8,6 +10,9 @@ const OSRM_API = 'https://router.project-osrm.org/route/v1/driving';
 const TOMTOM_API_KEY = process.env.TOMTOM_API_KEY;
 const TOMTOM_API = 'https://api.tomtom.com/routing/1/calculateRoute';
 const GEOCODING_API = 'https://nominatim.openstreetmap.org/reverse';
+const OVERPASS_API = process.env.OVERPASS_API ?? 'https://overpass-api.de/api/interpreter';
+const VAULT_CONFIG_FILE = process.env.VAULT_INFRASTRUCTURE_FILE ?? './config/vault-infrastructure.json';
+const SNAPSHOT_FILE = process.env.LIVE_SNAPSHOT_FILE ?? './data/live-snapshots.jsonl';
 const WEATHER_CODES = {
   0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
   45: 'Fog', 48: 'Depositing rime fog', 51: 'Drizzle', 61: 'Rain',
@@ -59,6 +64,75 @@ async function getJson(url, headers = {}) {
     throw new Error(`Upstream API returned ${response.status}${details ? `: ${details.slice(0, 180)}` : ''}`);
   }
   return response.json();
+}
+
+async function postJson(url, body, headers = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  let response;
+  try {
+    response = await fetch(url, { method: 'POST', headers, body, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new Error(`Upstream API returned ${response.status}`);
+  return response.json();
+}
+
+function finite(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+async function getHospitals(location) {
+  const query = `[out:json][timeout:20];nwr[amenity=hospital](around:30000,${location.latitude},${location.longitude});out center tags;`;
+  const payload = await postJson(OVERPASS_API, new URLSearchParams({ data: query }).toString(), {
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'User-Agent': 'HydroGridAI/1.0 (live flood dashboard)',
+  });
+  const elements = Array.isArray(payload.elements) ? payload.elements : [];
+  return elements
+    .map((element) => {
+      const latitude = finite(element.lat ?? element.center?.lat);
+      const longitude = finite(element.lon ?? element.center?.lon);
+      if (latitude === null || longitude === null) return null;
+      return {
+        id: `osm-hospital-${element.type}-${element.id}`,
+        name: element.tags?.name ?? 'Unnamed hospital',
+        latitude,
+        longitude,
+        source: 'OpenStreetMap Overpass',
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 50);
+}
+
+async function getVaultInfrastructure(regionName) {
+  try {
+    const config = JSON.parse(await readFile(VAULT_CONFIG_FILE, 'utf8'));
+    return (Array.isArray(config.regions?.[regionName]) ? config.regions[regionName] : []).filter((vault) =>
+      typeof vault?.id === 'string' &&
+      Number.isFinite(vault.latitude) && Number.isFinite(vault.longitude) &&
+      Number.isFinite(vault.capacity) && Array.isArray(vault.connectedVaults)
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function persistSnapshot(snapshot) {
+  await mkdir(path.dirname(SNAPSHOT_FILE), { recursive: true });
+  await appendFile(SNAPSHOT_FILE, `${JSON.stringify(snapshot)}\n`, 'utf8');
+}
+
+async function getSnapshots() {
+  try {
+    const content = await readFile(SNAPSHOT_FILE, 'utf8');
+    return content.split('\n').filter(Boolean).map((line) => JSON.parse(line)).slice(-1000);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
 }
 
 async function buildLiveData(input) {
@@ -122,6 +196,15 @@ async function buildLiveData(input) {
   const observedAt = new Date().toISOString();
   const source = 'Open-Meteo via HydroGrid backend';
   const region = regionPayload.address ?? {};
+  const regionName = region.state ?? 'Unknown region';
+  let hospitals = [];
+  let hospitalError = null;
+  try {
+    hospitals = await getHospitals(location);
+  } catch (error) {
+    hospitalError = error instanceof Error ? error.message : 'Hospital provider unavailable';
+  }
+  const vaults = await getVaultInfrastructure(regionName);
   const provenance = (field) => ({ status: 'live', source, observedAt, reliability: 0.95, field });
   return {
     location: { ...location, name: region.city ?? region.town ?? region.municipality ?? region.village ?? 'Selected location' },
@@ -165,7 +248,13 @@ async function buildLiveData(input) {
       lastUpdated: null,
       error: 'No public vault or water-level network feed is available for this location.',
     },
-    floodZones: [], vaults: [], roads: [], predictions: [], alerts: [],
+    floodZones: [], vaults, roads: [], predictions: [], alerts: [], hospitals,
+    dataQuality: {
+      hospitals: hospitals.length > 0 ? 'live' : 'unavailable',
+      vaults: vaults.length > 0 ? 'configured' : 'unavailable',
+      flood: floodAvailable ? 'live' : 'unavailable',
+      errors: hospitalError ? [`Hospitals: ${hospitalError}`] : [],
+    },
     floodData: floodAvailable
       ? { riverDischarge: discharge, source: 'Open-Meteo Flood API (GloFAS)', observedAt }
       : { source: null, observedAt: null, error: floodError },
@@ -175,10 +264,11 @@ async function buildLiveData(input) {
 async function buildLiveRoute(input) {
   const origin = coordinates({ latitude: input.originLatitude, longitude: input.originLongitude });
   const destination = coordinates({ latitude: input.destinationLatitude, longitude: input.destinationLongitude });
-  const coordinatePath = `${origin.longitude},${origin.latitude}:${destination.longitude},${destination.latitude}`;
+  const tomtomCoordinatePath = `${origin.latitude},${origin.longitude}:${destination.latitude},${destination.longitude}`;
+  const osrmCoordinatePath = `${origin.longitude},${origin.latitude};${destination.longitude},${destination.latitude}`;
   const url = TOMTOM_API_KEY
-    ? `${TOMTOM_API}/${coordinatePath}/json?${new URLSearchParams({ key: TOMTOM_API_KEY, routeType: 'fastest', traffic: 'true' })}`
-    : `${OSRM_API}/${coordinatePath}?${new URLSearchParams({ overview: 'full', geometries: 'geojson', steps: 'true' })}`;
+    ? `${TOMTOM_API}/${tomtomCoordinatePath}/json?${new URLSearchParams({ key: TOMTOM_API_KEY, routeType: 'fastest', traffic: 'true' })}`
+    : `${OSRM_API}/${osrmCoordinatePath}?${new URLSearchParams({ overview: 'full', geometries: 'geojson', steps: 'true' })}`;
   const payload = await getJson(url);
   if (TOMTOM_API_KEY) {
     const route = payload.routes?.[0];
@@ -219,7 +309,15 @@ const server = http.createServer(async (request, response) => {
         destinationLongitude: requestUrl.searchParams.get('destinationLongitude'),
       }));
     } catch (error) {
-      return json(response, 503, { status: 'unavailable', error: error instanceof Error ? error.message : 'Live route unavailable' });
+      const invalid = error instanceof Error && error.message === 'Valid latitude and longitude are required';
+      return json(response, invalid ? 400 : 503, { status: invalid ? 'invalid_request' : 'unavailable', error: error instanceof Error ? error.message : 'Live route unavailable' });
+    }
+  }
+  if (requestUrl.pathname === '/api/live-snapshots' && request.method === 'GET') {
+    try {
+      return json(response, 200, { snapshots: await getSnapshots() });
+    } catch (error) {
+      return json(response, 503, { status: 'unavailable', error: error instanceof Error ? error.message : 'Snapshot storage unavailable' });
     }
   }
   if (requestUrl.pathname !== '/api/live-data' || !['GET', 'POST'].includes(request.method ?? '')) {
@@ -231,9 +329,15 @@ const server = http.createServer(async (request, response) => {
       : await readBody(request);
     const result = await buildLiveData(input);
     result.weather.region = result.region;
+    try {
+      await persistSnapshot({ ...result, snapshotType: 'live', persistedAt: new Date().toISOString() });
+    } catch (error) {
+      result.dataQuality.errors.push(`Snapshots: ${error instanceof Error ? error.message : 'Snapshot storage unavailable'}`);
+    }
     return json(response, 200, result);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Live data unavailable';
+    console.error(`Live data request failed: ${message}`);
     return json(response, message === 'Valid latitude and longitude are required' ? 400 : 503, {
       status: message === 'Valid latitude and longitude are required' ? 'invalid_request' : 'unavailable',
       error: message,

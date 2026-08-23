@@ -730,3 +730,10 @@ export interface RiskHistoryEntry {
   riskLevel: RiskLevel;
   dataSource: 'live' | 'simulated';
 }
+
+export interface LiveSnapshot {
+  observedAt: string;
+  location: { latitude: number; longitude: number };
+  weather: Pick<LiveWeatherData, 'temperature' | 'precipitation' | 'humidity' | 'windSpeed' | 'forecastPrecipitation'>;
+  risk?: { score: number; level: RiskLevel };
+}

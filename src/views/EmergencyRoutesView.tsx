@@ -39,6 +39,7 @@ export function EmergencyRoutesView() {
   const amb = ambulances.find((a) => a.id === selectedAmbulanceId);
   const hospital = hospitals.find((h) => h.id === selectedHospitalId);
   const affectedRoads = roadSegments.filter((r) => !r.accessible);
+  const dataMode = useStore((s) => s.dataMode);
 
   const recommended = emergencyRouteSet?.recommended ?? null;
   const safest = emergencyRouteSet?.safest ?? null;
@@ -47,11 +48,11 @@ export function EmergencyRoutesView() {
   const handleCalculate = () => {
     setCalculating(true);
     setHasCalculated(false);
-    setTimeout(() => {
-      calculateEmergencyRoutes();
+    setTimeout(async () => {
+      await calculateEmergencyRoutes();
       setCalculating(false);
       setHasCalculated(true);
-    }, 700);
+    }, 0);
   };
 
   const handleClear = () => {
@@ -74,7 +75,7 @@ export function EmergencyRoutesView() {
           </p>
         </div>
         <span className="badge bg-risk-medium/15 text-risk-medium border border-risk-medium/30 text-[10px]">
-          SIMULATED ROUTE ANALYSIS
+          {dataMode === 'live' ? 'LIVE ROUTE ANALYSIS' : 'SIMULATION ROUTE ANALYSIS'}
         </span>
       </div>
 
@@ -257,6 +258,7 @@ export function EmergencyRoutesView() {
               recommended={recommended}
               alternatives={[safest, fastest].filter((r): r is RouteResult => r !== null && r !== recommended)}
               floodCondition={emergencyRouteSet.floodCondition}
+              dataMode={dataMode}
             />
           )}
 
@@ -278,8 +280,9 @@ export function EmergencyRoutesView() {
                 <div className="flex items-start gap-2 mt-3 p-3 bg-risk-critical/10 rounded-lg">
                   <Info className="w-3.5 h-3.5 text-risk-critical shrink-0 mt-0.5" />
                   <p className="text-surface-700">
-                    This is a simulation. Emergency operators should use official real-world navigation
-                    and emergency dispatch systems for actual response coordination.
+                    {dataMode === 'live'
+                      ? 'Route geometry is live. Road closures and dispatch status require configured real-time providers.'
+                      : 'This is a simulation. Emergency operators should use official real-world navigation and emergency dispatch systems.'}
                   </p>
                 </div>
               </div>
@@ -295,10 +298,12 @@ function RouteResultCard({
   recommended,
   alternatives,
   floodCondition,
+  dataMode,
 }: {
   recommended: RouteResult;
   alternatives: RouteResult[];
   floodCondition: import('@/types').RiskLevel;
+  dataMode: 'live' | 'simulation';
 }) {
   const routeNames = recommended.path.length > 0
     ? `Route via ${recommended.path.length} segments`
@@ -422,7 +427,7 @@ function RouteResultCard({
         <span className="text-xs font-bold" style={{ color: riskColor(floodCondition) }}>
           {riskLabel(floodCondition).toUpperCase()}
         </span>
-        <span className="text-[10px] text-surface-600 ml-auto">SIMULATED ROUTE ANALYSIS</span>
+        <span className="text-[10px] text-surface-600 ml-auto">{dataMode === 'live' ? 'LIVE ROUTE ANALYSIS' : 'SIMULATION ROUTE ANALYSIS'}</span>
       </div>
     </div>
   );
